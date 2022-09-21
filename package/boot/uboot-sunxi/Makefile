@@ -213,6 +213,15 @@ define U-Boot/orangepi_one_plus
   ATF:=h6
 endef
 
+define U-Boot/orangepi_3_lts
+  BUILD_SUBTARGET:=cortexa53
+  NAME:=Orange Pi 3 lts (H6)
+  DEPENDS:=+PACKAGE_u-boot-orangepi_3_lts
+  BUILD_DEVICES:=xunlong_orangepi-3-lts
+  UENV:=h6
+  ATF:=h6
+endef
+
 define U-Boot/orangepi_pc
   BUILD_SUBTARGET:=cortexa7
   NAME:=Orange Pi PC (H3)
@@ -375,6 +384,7 @@ UBOOT_TARGETS := \
 	orangepi_pc_plus \
 	orangepi_plus \
 	orangepi_2 \
+	orangepi_3_lts	\
 	orangepi_pc2 \
 	pangolin \
 	pine64_plus \
