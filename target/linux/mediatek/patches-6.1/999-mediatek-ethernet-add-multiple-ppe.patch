@@ -1,0 +1,119 @@
+
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -2306,7 +2306,7 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
+ 		}
+ 
+ 		if (reason == MTK_PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
+-			mtk_ppe_check_skb(eth->ppe[0], skb, hash);
++			mtk_ppe_check_skb(eth->ppe[eth->mac[mac]->ppe_idx], skb, hash);
+ 
+ 		skb_record_rx_queue(skb, 0);
+ 		napi_gro_receive(napi, skb);
+@@ -3512,6 +3512,15 @@ static int mtk_open(struct net_device *dev)
+ 
+ 		gdm_config = soc->offload_version ? soc->reg_map->gdma_to_ppe
+ 						  : MTK_GDMA_TO_PDMA;
++		// TODO add eth->ppe_num
++		if (mac->id == 2) {
++				mac->ppe_idx = 2;
++				gdm_config = MTK_GDMA_TO_PPE2;
++		} else if (mac->id == 1) {
++				mac->ppe_idx = 1;
++				gdm_config = MTK_GDMA_TO_PPE1;
++		} else
++
+ 		mtk_gdm_config(eth, gdm_config);
+ 
+ 		napi_enable(&eth->tx_napi);
+@@ -4601,6 +4610,7 @@ static const struct net_device_ops mtk_netdev_ops = {
+ 	.ndo_get_stats64        = mtk_get_stats64,
+ 	.ndo_fix_features	= mtk_fix_features,
+ 	.ndo_set_features	= mtk_set_features,
++	.ndo_fill_receive_path	= mtk_eth_fill_receive_path,
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ 	.ndo_poll_controller	= mtk_poll_controller,
+ #endif
+@@ -4849,6 +4859,16 @@ static int mtk_sgmii_init(struct mtk_eth *eth)
+ 	return 0;
+ }
+ 
++int mtk_eth_fill_receive_path(struct net_device_path_ctx *ctx,
++			      struct net_device_path *path)
++{
++	struct mtk_mac *mac = netdev_priv(ctx->dev);
++
++	path->mtk_wdma.wdma_idx = mac->ppe_idx;
++
++	return 0;
++}
++
+ static int mtk_probe(struct platform_device *pdev)
+ {
+ 	struct resource *res = NULL, *res_sram;
+@@ -5078,10 +5098,12 @@ static int mtk_probe(struct platform_device *pdev)
+ 
+ 	if (eth->soc->offload_version) {
+ 		u32 num_ppe = mtk_is_netsys_v2_or_greater(eth) ? 2 : 1;
++		if(mtk_is_netsys_v3_or_greater(eth))
++			num_ppe =3;
+ 
+ 		num_ppe = min_t(u32, ARRAY_SIZE(eth->ppe), num_ppe);
+ 		for (i = 0; i < num_ppe; i++) {
+-			u32 ppe_addr = eth->soc->reg_map->ppe_base + i * 0x400;
++			u32 ppe_addr = eth->soc->reg_map->ppe_base + (i == 2 ? 0xC00 : i * 0x400);
+ 
+ 			eth->ppe[i] = mtk_ppe_init(eth, eth->base + ppe_addr, i);
+ 
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+index e80f6fb..fc28d16 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+@@ -125,6 +125,10 @@
+ #define MTK_GDMA_TO_PDMA	0x0
+ #define MTK_GDMA_DROP_ALL       0x7777
+ 
++#define MTK_GDMA_TO_PPE0	0x3333
++#define MTK_GDMA_TO_PPE1	0x4444
++#define MTK_GDMA_TO_PPE2	0xcccc
++
+ /* GDM Egress Control Register */
+ #define MTK_GDMA_EG_CTRL(x)	({ typeof(x) _x = (x); (_x == MTK_GMAC3_ID) ?	\
+ 				   0x544 : 0x504 + (_x * 0x1000); })
+@@ -1440,7 +1444,7 @@ struct mtk_eth {
+ 
+ 	struct metadata_dst		*dsa_meta[MTK_MAX_DSA_PORTS];
+ 
+-	struct mtk_ppe			*ppe[2];
++	struct mtk_ppe			*ppe[3];
+ 	struct rhashtable		flow_table;
+ 
+ 	struct bpf_prog			__rcu *prog;
+@@ -1465,6 +1469,7 @@ struct mtk_eth {
+ struct mtk_mac {
+ 	int				id;
+ 	phy_interface_t			interface;
++	unsigned int			ppe_idx;
+ 	int				speed;
+ 	struct device_node		*of_node;
+ 	struct phylink			*phylink;
+@@ -1625,6 +1630,8 @@ int mtk_flow_offload_cmd(struct mtk_eth *eth, struct flow_cls_offload *cls,
+ 			 int ppe_index);
+ void mtk_flow_offload_cleanup(struct mtk_eth *eth, struct list_head *list);
+ void mtk_eth_set_dma_device(struct mtk_eth *eth, struct device *dma_dev);
++int mtk_eth_fill_receive_path(struct net_device_path_ctx *ctx,
++			      struct net_device_path *path);
+ 
+ static inline int mtk_mac2xgmii_id(struct mtk_eth *eth, int mac_id)
+ {
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -1620,6 +1620,8 @@ struct net_device_ops {
+ 	struct net_device *	(*ndo_get_peer_dev)(struct net_device *dev);
+ 	int                     (*ndo_fill_forward_path)(struct net_device_path_ctx *ctx,
+                                                          struct net_device_path *path);
++	int                     (*ndo_fill_receive_path)(struct net_device_path_ctx *ctx,
++							 struct net_device_path *path);
+ 	ktime_t			(*ndo_get_tstamp)(struct net_device *dev,
+ 						  const struct skb_shared_hwtstamps *hwtstamps,
+ 						  bool cycles);
