@@ -1,8 +1,7 @@
-From 062d55dd9e509a1de91e66dac362c35a59105409 Mon Sep 17 00:00:00 2001
+From 0247fadb86395a2fbee5064f0fba195c25b1a37d Mon Sep 17 00:00:00 2001
 From: Elad Yifee <eladwf@gmail.com>
 Date: Tue, 30 Jan 2024 14:22:22 +0200
-Subject: [PATCH v4] net: ethernet: mtk_eth_soc: ppe: add support for multiple
- PPEs
+Subject: [PATCH] net: ethernet: mtk_eth_soc: ppe: add support for multiple PPEs
 
 Add the missing pieces to allow multiple PPEs units, one for each GMAC.
 mtk_gdm_config has been modified to work on targted mac ID,
@@ -11,17 +10,18 @@ operations like setting the MAC's PPE index.
 
 Signed-off-by: Elad Yifee <eladwf@gmail.com>
 ---
+v5:	add sanity check for ppe index on flow_offload_replace
 v4: 
 	- applied changes suggested by Jakub Kicinski
 	- modified flow_offload_replace to get the correct PPE index from flow
-	- add gdma_to_ppe registers to mtk_reg_map instead of using defines
+	- add gdma_to_ppe[x] registers to mtk_reg_map instead of using defines
 v3: applied changes suggested by Daniel Golle
 v2: fixed CI warnings
 ---
  drivers/net/ethernet/mediatek/mtk_eth_soc.c   | 106 +++++++++++-------
  drivers/net/ethernet/mediatek/mtk_eth_soc.h   |  15 ++-
- .../net/ethernet/mediatek/mtk_ppe_offload.c   |  16 ++-
- 3 files changed, 91 insertions(+), 46 deletions(-)
+ .../net/ethernet/mediatek/mtk_ppe_offload.c   |  15 ++-
+ 3 files changed, 91 insertions(+), 45 deletions(-)
 
 diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 index 179c0230655a..67e19bd25f7a 100644
@@ -291,7 +291,7 @@ index 723fc637027c..e4c8c8bc7e7b 100644
  		     void *type_data);
  int mtk_flow_offload_cmd(struct mtk_eth *eth, struct flow_cls_offload *cls,
 diff --git a/drivers/net/ethernet/mediatek/mtk_ppe_offload.c b/drivers/net/ethernet/mediatek/mtk_ppe_offload.c
-index aa262e6f4b85..fdad16c16193 100644
+index aa262e6f4b85..bc03d297470a 100644
 --- a/drivers/net/ethernet/mediatek/mtk_ppe_offload.c
 +++ b/drivers/net/ethernet/mediatek/mtk_ppe_offload.c
 @@ -245,10 +245,10 @@ mtk_flow_offload_replace(struct mtk_eth *eth, struct flow_cls_offload *f,
@@ -306,7 +306,7 @@ index aa262e6f4b85..fdad16c16193 100644
  	struct mtk_flow_entry *entry;
  	int offload_type = 0;
  	int wed_index = -1;
-@@ -264,6 +264,14 @@ mtk_flow_offload_replace(struct mtk_eth *eth, struct flow_cls_offload *f,
+@@ -264,6 +264,15 @@ mtk_flow_offload_replace(struct mtk_eth *eth, struct flow_cls_offload *f,
  		struct flow_match_meta match;
  
  		flow_rule_match_meta(rule, &match);
@@ -315,22 +315,14 @@ index aa262e6f4b85..fdad16c16193 100644
 +			if (idev) {
 +				struct mtk_mac *mac = netdev_priv(idev);
 +
-+				ppe_index = mac->ppe_idx;
++				if(mac->ppe_idx < mtk_get_ppe_num(eth))
++					ppe_index = mac->ppe_idx;
 +			}
 +		}
  	} else {
  		return -EOPNOTSUPP;
  	}
-@@ -574,7 +582,7 @@ mtk_eth_setup_tc_block_cb(enum tc_setup_type type, void *type_data, void *cb_pri
- 	if (type != TC_SETUP_CLSFLOWER)
- 		return -EOPNOTSUPP;
- 
--	return mtk_flow_offload_cmd(eth, cls, 0);
-+	return mtk_flow_offload_cmd(eth, cls, mac->ppe_idx);
- }
- 
- static int
-@@ -637,7 +645,9 @@ int mtk_eth_setup_tc(struct net_device *dev, enum tc_setup_type type,
+@@ -637,7 +646,9 @@ int mtk_eth_setup_tc(struct net_device *dev, enum tc_setup_type type,
  	}
  }
  
